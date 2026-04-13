@@ -279,7 +279,7 @@ dependencies:
       - pygments==2.19.2
       - pyro-api==0.1.2
       - pyro-ppl==1.8.6
-      - pytorch-lightning==1.1.8
+#      - pytorch-lightning==1.1.8
       - pyyaml==6.0.3
       - pyzmq==27.1.0
       - requests-oauthlib==2.0.0
