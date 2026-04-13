@@ -1,0 +1,29 @@
+Bootstrap: docker
+From: condaforge/miniforge3:latest
+
+%post
+    # Install system packages
+    apt-get update && apt-get install -y git build-essential
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+    # Clone the VEGA repository
+    git clone https://github.com/willsketch/VEGA.git /opt/VEGA
+
+    # Create conda environment with Python 3.8
+    conda create -n vega python=3.8 -y
+    conda run -n vega pip install -U pip setuptools
+
+    # Install the vega package and dependencies
+    conda run -n vega pip install -e /opt/VEGA/vega
+    # Clean up
+    mamba clean --all -y
+
+    # Activate vega environment on container start
+    echo '. "/opt/conda/etc/profile.d/conda.sh"' >> $APPTAINER_ENVIRONMENT
+    echo 'conda activate vega' >> $APPTAINER_ENVIRONMENT
+
+%runscript
+    # /workspace is bound to the project directory at runtime:
+    #   apptainer run --nv -B /cluster/path/VEGA:/workspace image.sif [args]
+    cd /workspace
+    exec python Vega-Runs.py "$@"
