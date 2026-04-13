@@ -9,11 +9,11 @@ From: condaforge/miniforge3:latest
     # Clone the VEGA repository
     git clone https://github.com/willsketch/VEGA.git /opt/VEGA
 
-    # Create conda environment with Python 3.8
-    conda create -n vega python=3.8 -y
+    # Create conda environment from pinned environment.yaml
+    conda env create -f /opt/VEGA/environment.yaml
     conda run -n vega pip install -U pip setuptools
 
-    # Install the vega package and dependencies
+    # Install the vega package into the environment
     conda run -n vega pip install -e /opt/VEGA/vega
     # Clean up
     mamba clean --all -y
