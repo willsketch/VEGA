@@ -1,0 +1,10 @@
+.idea/
+VEGA_GONNECT.ipynb
+__pycache__/
+data/
+splits_SEAAD/
+splits_TCGA/
+splits_TCGA_VEGA.zip
+splits_hallmark_geneset/
+splits_reactome_674_geneset/
+

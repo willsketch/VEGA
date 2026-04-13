@@ -1,0 +1,30 @@
+/tests/*
+.ipynb_checkpoints/
+/tutorials/train_pbmc.h5ad
+__pycache__
+/docs/build/
+/docs/source/tutorials/*.h5ad
+
+# Exclude test script and test gmt file
+!/tests/test_vega.py
+!/tests/test_gmt.gmt
+
+# Install related stuff
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
