@@ -35,6 +35,8 @@ def parse_args():
     # They capture variance from genes not annotated to any pathway. Keep at 1.
     parser.add_argument("--add_nodes", type=int, default=1,
                         help="Number of fully-connected unannotated latent nodes added to the GMT mask")
+    parser.add_argument("--max_eval_cells", type=int, default=10_000,
+                        help="Max cells to use for evaluation metrics (default: 10000)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing model directories")
     return parser.parse_args()
 
@@ -204,10 +206,13 @@ def save_embeddings(model, expr_df, sample_ids, gmv_names, save_path, device):
     save_path   : full path including filename, without extension (.csv appended)
     device      : torch device
     """
-    X = torch.tensor(expr_df.values, device=device, dtype=torch.float32)
+    chunks = []
     with torch.no_grad():
-        z, _, _ = model.encode(X, batch_index=None)
-    z_np = z.detach().cpu().numpy()
+        for i in range(0, len(expr_df), 1024):
+            X_chunk = torch.tensor(expr_df.values[i:i+1024], device=device, dtype=torch.float32)
+            z_chunk, _, _ = model.encode(X_chunk, batch_index=None)
+            chunks.append(z_chunk.cpu())
+    z_np = torch.cat(chunks, dim=0).numpy()
     df = pd.DataFrame(z_np, index=sample_ids, columns=gmv_names)
     df.to_csv(save_path + '.csv')
     print(f"  Saved embeddings → {save_path}.csv  ({df.shape[0]} cells × {df.shape[1]} GMVs)")
@@ -216,27 +221,45 @@ def save_embeddings(model, expr_df, sample_ids, gmv_names, save_path, device):
 # -----------------------------
 # Evaluation util functions
 # -----------------------------
-def evaluate_model(model, expr_df, labels, device, drop_genes=None):
+def evaluate_model(model, expr_df, labels, device, drop_genes=None, max_cells=10_000):
     """
     Evaluate on a matrix (expr_df) and labels.
     Returns dict with NMI, ARI, Silhouette, mse
     """
-    X = torch.tensor(expr_df.values, device=device, dtype=torch.float32, requires_grad=False)
+    if len(expr_df) > max_cells:
+        rng = np.random.default_rng(42)
+        label_arr = labels.values
+        classes, counts = np.unique(label_arr, return_counts=True)
+        n_per_class = np.maximum(1, np.round(max_cells * counts / len(label_arr)).astype(int))
+        idx = np.concatenate([
+            rng.choice(np.where(label_arr == c)[0], min(n, int((label_arr == c).sum())), replace=False)
+            for c, n in zip(classes, n_per_class)
+        ])
+        expr_df = expr_df.iloc[idx]
+        labels = labels.iloc[idx]
 
+    Z_chunks, X_rec_chunks, X_chunks = [], [], []
     with torch.no_grad():
-        Z, mu, logvar = model.encode(X, batch_index=None)
-        X_rec = model.decode(Z, batch_index=None)
+        for i in range(0, len(expr_df), 1024):
+            X_chunk = torch.tensor(expr_df.values[i:i+1024], device=device, dtype=torch.float32)
+            Z_chunk, _, _ = model.encode(X_chunk, batch_index=None)
+            X_rec_chunk = model.decode(Z_chunk, batch_index=None)
+            Z_chunks.append(Z_chunk.cpu())
+            X_rec_chunks.append(X_rec_chunk.cpu())
+            X_chunks.append(X_chunk.cpu())
+
+    Z_cpu = torch.cat(Z_chunks, dim=0)
+    X_rec_cpu = torch.cat(X_rec_chunks, dim=0)
+    X_cpu = torch.cat(X_chunks, dim=0)
 
     if drop_genes is not None and len(drop_genes) > 0:
         gene_mask = ~expr_df.columns.isin(drop_genes)
-        # keep_idx = torch.tensor(gene_mask, device=device)
-
-        mse = F.mse_loss(X_rec[:, gene_mask], X[:, gene_mask], reduction="mean").item()
+        mse = F.mse_loss(X_rec_cpu[:, gene_mask], X_cpu[:, gene_mask], reduction="mean").item()
     else:
-        mse = F.mse_loss(X_rec, X, reduction="mean").item()
+        mse = F.mse_loss(X_rec_cpu, X_cpu, reduction="mean").item()
 
     # clustering on CPU numpy
-    Z_np = Z.detach().cpu().numpy()
+    Z_np = Z_cpu.numpy()
     n_clusters = int(labels.nunique())
 
     # if only one cluster exists in labels, set clustering metrics to Nan
@@ -268,7 +291,7 @@ def evaluate_model(model, expr_df, labels, device, drop_genes=None):
 # main function for 1 run
 # -----------------------------
 def run_experiment(run_seed, dataset_cfg, gmt_files, device, n_epochs=300, batch_size=128,
-                   train_size=0.82, overwrite=True, add_nodes=1, positive_decoder=True):
+                   train_size=0.82, overwrite=True, add_nodes=1, positive_decoder=True, max_eval_cells=10_000):
 
     split_dir         = dataset_cfg['split_dir']
     expr_path         = dataset_cfg['expr_data_path']
@@ -350,8 +373,8 @@ def run_experiment(run_seed, dataset_cfg, gmt_files, device, n_epochs=300, batch
                 print(f"  ✓ Model loaded.")
 
             print(f"  → Evaluating...")
-            train_metrics = evaluate_model(model, train_expr_df, labels_train, device=device, drop_genes=drop_genes)
-            test_metrics = evaluate_model(model, test_expr_df, labels_test, device=device, drop_genes=drop_genes)
+            train_metrics = evaluate_model(model, train_expr_df, labels_train, device=device, drop_genes=drop_genes, max_cells=max_eval_cells)
+            test_metrics = evaluate_model(model, test_expr_df, labels_test, device=device, drop_genes=drop_genes, max_cells=max_eval_cells)
             print(f"  Train NMI: {train_metrics['NMI']:.4f} | Test NMI: {test_metrics['NMI']:.4f}")
 
             print(f"  → Saving embeddings...")
@@ -361,6 +384,9 @@ def run_experiment(run_seed, dataset_cfg, gmt_files, device, n_epochs=300, batch
                             os.path.join(run_folder, f"z_test_{condition}_{gmt_name}"), device)
 
             gmt_metrics[condition] = {"train": train_metrics, "test": test_metrics}
+
+            del model
+            torch.cuda.empty_cache()
 
         seed_metrics[gmt_name] = gmt_metrics
 
@@ -406,6 +432,7 @@ if __name__ == "__main__":
                     overwrite=overwrite,
                     add_nodes=add_nodes,
                     positive_decoder=True,
+                    max_eval_cells=args.max_eval_cells,
                 )
 
                 line = f"run-{s}: {seed_metrics}\n"

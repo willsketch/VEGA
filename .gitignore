@@ -9,3 +9,4 @@ splits_hallmark_geneset/
 splits_reactome_674_geneset/
 Vega_image.sif
 SEAAD_job.sbatch
+splits_SEAAD_results.zip
